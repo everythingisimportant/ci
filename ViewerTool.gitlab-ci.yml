@@ -1,0 +1,47 @@
+stages:
+    - build
+
+before_script: # check all the software version
+    - (java -version) ; (javac -version) ; (gradle -v)
+    - $DATE             = Get-Date -Format "MMddyyyy"
+    - $FILE_WAR         = "viewer-tool-${DATE}.war"
+    - $KEY              = "private.key"
+    - $KEY_DIR          = "D:/${KEY}"
+
+BUILD:
+    stage: build
+    tags:
+        - runner_nmnhat
+    script:
+        # # # Create private key
+        - $key="-----BEGIN RSA PRIVATE KEY-----`nMIIEpAIBAAKCAQEAhkwfSo6aocY++TSx3t/exY2gd7AFUKcxpKPrCwIWqZRfot7q`nPEGNsiU4VevvNZeGLZ134o+6kk1T/Z28b0UgvzJ9IAQVIzoInxCv8aTXMgu60jg3`nok72a9XUtzxGALEUqQ49dAo5yNJWIRLtakbIjD95CLAO1kuhu1+9G3s5QIWiKSbT`ntjefe3aOC/AxLg/0ON4bBbb73aUM8tCdJgPbubK9ftIuNuo2nmTlZ7PXJ3Y8XkeA`nabadfBlRHKyZpzDtmmtvSEyO8ohZZpCVpNj6qVneQJbeSCqOXFsQwZCJ/dZMyRqA`njCXqpra4k7PdM1gllDVD2klu4K566kUv7Y0KLQIDAQABAoIBAHRhn3RjJIoxXP1l`ntwcoBsw4selG9zQv0AuXqeb+RllrJX3lpCPXw02wh6OeNMzCpRr+rZf/anXC4ZiV`ni2j6BSjsPhbyssa2UiZWtcK5UWwjUiE/aqcTuuU0h4TLjPaofvkKSCM5gV4ROWas`nGmbRNJalouPufs0i+eOBUkZwgOryGx+Rbz5pp8ue+I7B55kA3DA/NiTtI03K8EFA`nVtMA5kU+Pge7j3Nae8aHJ+Zx3GKM7rpYXsVt0NH7CYx0LDryQBfOv+vtMRMHJ0/a`n6+e/spH6PX55CCA5F3p2TTvot1ClxOkN8eiCqTfgXzXpKxSZBeRCdaZGBvWgXCR0`n4CBaudkCgYEA5YjSbdXmtpBydxzU1oMG/G6fFkkYNH3fySuLRowQ5O5L5zuJxIOC`nWYHV0BTvdXFQYAYVKtFuKJBH2tayb5c6I6jGFosybZSSs0LljEHrANYVP316J8NN`nF8lsAeeYnG0CoEkdgzIhYJNSmbFZNOdo/kymEYLXvwGC/UjKxHou7E8CgYEAlcgu`nwasD3cv2+M6WaGcmVWNeiIbpcLel5rcfS2O+LyyHA9Df9+ZeNmjyuX0qeSYU6BzG`nCByMi9H9o0dZR2RqKujOropuu2EBcGoHiDKshCmXpqpF+ymwxuix4iLKyw8dFdPz`nT+sVy5zWENi00kM+RGa9pHyWZlHTgUmF3b8r1sMCgYEAkBntwfbf+Q2GTzFSjbmE`n0UXBqoQJJitAK1OjBI86q/7OuESwoSbO1tKkIRaDnv+criwjbdY9iknKUqEnNNeE`nMI7sjYqmBhWYY+JDqmJX3xaIEGv+HKiH5b8Wh7uWG950H5zHYm4+dhsHaGXm00fU`nqpIEUEoMmGWijtD8O41ZmBECgYBfRFgY7oEjDZwkXKHl/dWv8egqxkSsYOKwgEDz`nXpmUv6mQj8Ykku3Rhab8u9PMAqDBkauTdTUfqYy90Z/DfObaLAFpmrsbi3Oy4H2x`n7ykzVpESfLLOMZIyscaSoraBuTcyrwDPECNownSVeoBoTETKlN6CRIwUwG7aiL0Q`ncYucqQKBgQCp0pHqEKUJxI+Om+hMa9uW0nh5T1SEmGlzgWhwgupd709epUkB2OTq`nnQ9HqYGJpFcYiVOsMBZ+1wlPoIYMIxiCdb+XFRcciO+LvtiE+nQoHoBDp+HH/NCB`n8RgklEVpkM1kvI0qLz1GiILbDIDuhDytEqQUWGIR9EI1fy8+2jDDgA==`n-----END RSA PRIVATE KEY-----"
+        - Set-Content -Path $KEY_DIR -Value $key
+        
+        # # # Get source code
+        - cd D:\
+        - if (Test-Path ./dm_viewer_tool)  {Remove-item -Path ./dm_viewer_tool -Recurse -force}
+        - git clone https://nvnam:$dm_app_password@bitbucket.org/awtcusdevteam/dm_viewer_tool.git
+        - cd ./dm_viewer_tool
+        - git checkout development
+        - (git remote -vv) ; (git branch -vv)
+        - (Get-Content ./source_reactjs/package.json) -replace '\s\&\&\syarn\sremove_prev_build', '' | Set-Content ./source_reactjs/package.json
+        - (Get-Content ./source_reactjs/package.json) -replace 'cp\s\-a\sbui.*templates\/', 'xcopy .\\build\\* ..\\src\\main\\resources\\templates\\ /E/I/Y' | Set-Content ./source_reactjs/package.json
+
+        # # # # Build
+        - npm install -g yarn
+        - ./gradlew -Pprod clean bootWar
+
+        # # # # Check output folder
+        - cd ./build/libs
+        - ls
+
+        # # # # Copy output to EC2
+        - cd D:/dm_viewer_tool
+        - scp -o StrictHostKeyChecking=no -i $KEY_DIR ./build/libs/$FILE_WAR ec2-user@ec2-54-162-107-107.compute-1.amazonaws.com:.
+
+        # # # # SSH to EC2
+        - ssh -o StrictHostKeyChecking=no ec2-user@ec2-54-162-107-107.compute-1.amazonaws.com -n -T -i $KEY_DIR "sudo pkill java; sudo su root -c 'nohup java -jar $FILE_WAR > ci.log 2>&1 &'"
+
+        # # # Finish
+        - ./gradlew --stop
+        - echo "Finished..."
