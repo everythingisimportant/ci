@@ -1,0 +1,119 @@
+stages:
+    - browser
+    - android
+
+before_script: # check all the software version
+    - $DATE             = Get-Date -Format "yyyy.MM.dd01"
+    - $BUILD_VER        = Get-Date -Format "yyyyMMdd.01"
+    - $IOS_BUILD        = "ios-longhorn-${BUILD_VER}.ipa"
+    - $ANDROID_BUILD    = "android-longhorn-${BUILD_VER}.apk"
+    - $BROWSER_BUILD    = "browser-longhorn-${BUILD_VER}.zip"
+    - $SOURCE_DIR       = "D:/awtc-chatbot"
+    - $UPLOAD_DIR       = "D:/upload-build"
+    - (java -version) ; (javac -version) ; (gradle -v) ; (node -v) ; (npm -v)
+    - android list target
+
+WWW:
+    stage: browser
+    tags:
+        - runner_nmnhat
+    script:
+        
+        # Get source code
+        - cd D:\
+        - if (Test-Path $SOURCE_DIR)  {Remove-item -Path $SOURCE_DIR -Recurse -force}
+        - git clone https://gitlab.tma.com.vn/dc12a-pg3/awtc-chatbot.git
+        - cd $SOURCE_DIR
+        - git checkout develop_longhorn_performance
+        - (git remote -vv) ; (git branch -vv)
+
+        # Remove old output
+        - if (Test-Path $SOURCE_DIR/output)  {rm $SOURCE_DIR/output -Recurse}
+        - mkdir ./output
+
+        # Install cordova@8.1.2, npm packages
+        - npm i -g cordova@8.1.2
+        - npm i
+        - npm list -g -depth=0
+
+        # Bundle web
+        - ( (Get-Content -Path .\package.json -Raw) -replace "\d{4}\.\d{2}\.\d{4}", $DATE ) | Set-Content -Path .\package.json
+        - npm run release-map
+
+        # Add platform
+        - cd $SOURCE_DIR/cordova
+        - cordova platform ls
+        - cordova platform add browser
+        - cordova platform ls
+
+        # Change to new date
+        - cd $SOURCE_DIR
+        - ( (Get-Content -Path .\cordova\package.json -Raw) -replace "\d{4}\.\d{2}\.\d{4}", $DATE ) | Set-Content -Path .\cordova\package.json
+        - ( (Get-Content -Path .\cordova\config.xml -Raw) -replace "\d{4}\.\d{2}\.\d{4}", $DATE ) | Set-Content -Path .\cordova\config.xml
+
+        # Remove old builds
+        - cd $SOURCE_DIR/cordova
+        - if (Test-Path ./platforms/ios/build)  {rm ./platforms/ios/build -Recurse}
+        - if (Test-Path ./platforms/browser/www)  {rm ./platforms/browser/www -Recurse}
+        - if (Test-Path ./platforms/android/app/build)  {rm ./platforms/android/app/build -Recurse}
+        - if (Test-Path ./platforms/android/app/src/main/res)  { Get-ChildItem -Path ./platforms/android/app/src/main/res -Include 'drawable*' -Recurse -force | Remove-item -Recurse -force }
+
+        # Build
+        - cordova build browser --prod --release
+
+        # Move file and folder to output folder
+        - mv $SOURCE_DIR/cordova/platforms/browser/www $SOURCE_DIR/output/www
+        
+        # Check and compress output
+        - cordova platform rm browser
+        - cd $SOURCE_DIR/output
+        - ls
+        - Compress-Archive -Path ./www -DestinationPath ./$BROWSER_BUILD
+        - Remove-Item ./www -Recurse
+        - ls
+
+APK:
+    stage: android
+    tags:
+        - runner_nmnhat
+    allow_failure: # true
+        exit_codes: 138
+    script:
+
+        # Add platform
+        - cd $SOURCE_DIR/cordova
+        # - cordova platform ls
+        # - cordova platform rm android
+        - cordova platform ls
+        - cordova platform add android
+        - cordova platform ls
+        - cordova requirements
+
+        # Build
+        - cordova build android --release --buildConfig
+
+        # Move file and folder to output folder
+        - mv $SOURCE_DIR/cordova/platforms/android/app/build/outputs/apk/release/app-release.apk $SOURCE_DIR/output/$ANDROID_BUILD
+
+        # # Check output folder
+        - cd $SOURCE_DIR/output
+        - ls
+
+        # Commit to SVN
+        - New-Item -ItemType Directory -Force -Path $UPLOAD_DIR
+        - cd $UPLOAD_DIR
+        - git config --global user.name "nmnhat"
+        - git config --global user.email "nmnhat@tma.com.vn"
+        - git config --list
+        - subgit install repos.git
+        - if (Test-Path ./Build.$BUILD_VER)  {rm ./Build.$BUILD_VER -Recurse}
+        - git pull repos.git
+        - if (Test-Path ./Build.$BUILD_VER)  {rm ./Build.$BUILD_VER -Recurse}
+        - Copy-Item $SOURCE_DIR/output -Recurse ./Build.$BUILD_VER
+        - git status
+        - git add Build*
+        - git commit -m "Commit build by CI"
+        - git push repos.git
+        - subgit shutdown repos.git
+        # - ./gradlew --stop
+        - echo "FINISHED..."
